@@ -50,9 +50,14 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Set a const maxMemory to 10MB
-	const maxMemory = 10 << 20 // bit-shifted the number 10 to the left 20 times to get an int that stores the proper number of bytes
+	const maxMemory = 10 << 20
+	// bit-shifted the number 10 to the left 20 times to get an int that stores the proper number of bytes
 	//Bit shifting is a way to multiply by powers of 2. 10 << 20 is the same as 10 * 1024 * 1024, which is 10MB.
-	r.ParseMultipartForm(maxMemory)
+	err = r.ParseMultipartForm(maxMemory)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "File too big", err)
+		return
+	}
 
 	// "thumbnail" should match the HTML form input name
 	file, header, err := r.FormFile("thumbnail")
