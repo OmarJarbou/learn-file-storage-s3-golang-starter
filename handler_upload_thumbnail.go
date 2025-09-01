@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -60,7 +62,18 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	// The Content-Type is in the header.Header map, not via Get method
 	mediaType := header.Header.Get("Content-Type")
-	mediaTypeParts := strings.Split(mediaType, "/")
+	mimeType, _, err := mime.ParseMediaType(mediaType)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Error while parsing media type to mime", err)
+		return
+	}
+	if !(mimeType == "image/jpeg" || mimeType == "image/png") {
+		mimeErr := errors.New("error while processing mime type")
+		respondWithError(w, http.StatusBadRequest, "Only files of type image/jpeg and image/png can be uploaded", mimeErr)
+		return
+	}
+
+	mediaTypeParts := strings.Split(mimeType, "/")
 	fileExtention := mediaTypeParts[len(mediaTypeParts)-1]
 	fileName := videoIDString + "." + fileExtention
 	filePath := filepath.Join(cfg.assetsRoot, fileName)
