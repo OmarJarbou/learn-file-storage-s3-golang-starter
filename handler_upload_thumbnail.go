@@ -1,10 +1,12 @@
 package main
 
 import (
-	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
@@ -58,15 +60,23 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	// The Content-Type is in the header.Header map, not via Get method
 	mediaType := header.Header.Get("Content-Type")
-	data, err := io.ReadAll(file)
+	mediaTypeParts := strings.Split(mediaType, "/")
+	fileExtention := mediaTypeParts[len(mediaTypeParts)-1]
+	fileName := videoIDString + "." + fileExtention
+	filePath := filepath.Join(cfg.assetsRoot, fileName)
+	createdFile, err := os.Create(filePath)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Error reading thumbnail file content", err)
+		respondWithError(w, http.StatusBadRequest, "Error while creating the file", err)
+		return
+	}
+	_, err = io.Copy(createdFile, file)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Error while copying multipart file contnet to the new file", err)
 		return
 	}
 
 	// Update video metadata to contain thumbnail url
-	base64ImageData := base64.StdEncoding.EncodeToString(data)
-	thumbnailURL := "data:" + mediaType + ";base64," + base64ImageData
+	thumbnailURL := "http://localhost:" + cfg.port + "/assets/" + fileName
 	vedioMetadata.ThumbnailURL = &thumbnailURL
 	err = cfg.db.UpdateVideo(vedioMetadata)
 	if err != nil {
