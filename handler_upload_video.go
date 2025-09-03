@@ -1,14 +1,18 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -99,6 +103,19 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	ratio, err := getVideoAspectRatio(createdFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Error while calculating aspect ratio of the file: "+err.Error(), err)
+		return
+	}
+	if ratio == "16:9" {
+		fileName = "landscape/" + fileName
+	} else if ratio == "9:16" {
+		fileName = "portrait/" + fileName
+	} else {
+		fileName = "other/" + fileName
+	}
+
 	putObjectInput := s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
 		Key:         &fileName,
@@ -120,4 +137,65 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	}
 
 	respondWithJSON(w, http.StatusOK, vedioMetadata)
+}
+
+func classifyAspectRatio(width, height int) string {
+	if width <= 0 || height <= 0 {
+		return "invalid"
+	}
+
+	ratio := float64(width) / float64(height)
+
+	knownRatios := map[string]float64{
+		"16:9": 16.0 / 9.0,
+		"9:16": 9.0 / 16.0,
+	}
+
+	tolerance := 0.02 // 2% tolerance
+
+	closest := "other"
+	for label, ref := range knownRatios {
+		if math.Abs(ratio-ref) < tolerance {
+			closest = label
+			break
+		}
+	}
+
+	return closest
+}
+
+func getVideoAspectRatio(filePath string) (string, error) {
+	cmd := exec.Command("ffprobe", "-v", "error", "-print_format", "json", "-show_streams", filePath)
+	var buffer bytes.Buffer
+	cmd.Stdout = &buffer
+	cmd.Stderr = &buffer
+
+	err := cmd.Run()
+	if err != nil {
+		returnErr := errors.New("Error while executing ffprobe command: " + err.Error() + "\nOutput: " + buffer.String())
+		return "", returnErr
+	}
+
+	var data ffprobeOutput
+	err = json.Unmarshal(buffer.Bytes(), &data)
+	if err != nil {
+		returnErr := errors.New("Error decoding json result of ffprobe: " + err.Error())
+		return "", returnErr
+	}
+
+	width := data.Streams[0].Width
+	height := data.Streams[0].Height
+
+	if height == 0 {
+		returnErr := errors.New("height cannot be zero")
+		return "", returnErr
+	}
+
+	aspectRatio := classifyAspectRatio(width, height)
+
+	if aspectRatio == "16:9" || aspectRatio == "9:16" {
+		return aspectRatio, nil
+	}
+
+	return "other", nil
 }
