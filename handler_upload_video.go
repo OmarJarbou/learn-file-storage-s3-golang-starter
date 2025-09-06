@@ -116,10 +116,30 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		fileName = "other/" + fileName
 	}
 
+	// move moov/atom/video-metadata from end of file to the start, for fast streaming start
+	fastStartFilePath, err := processVideoForFastStart(createdFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Error while processing video for fast start: "+err.Error(), err)
+		return
+	}
+	processedVideoFile, err := os.Open(fastStartFilePath)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Error while openning file with path: "+fastStartFilePath, err)
+		return
+	}
+	processedVideoFileName := processedVideoFile.Name()
+	_, err = processedVideoFile.Seek(0, io.SeekStart)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Error while adjusting offset in the file", err)
+		return
+	}
+	defer os.Remove(processedVideoFileName)
+	defer processedVideoFile.Close()
+
 	putObjectInput := s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
 		Key:         &fileName,
-		Body:        createdFile,
+		Body:        processedVideoFile,
 		ContentType: &mimeType,
 	}
 	_, err = cfg.s3Client.PutObject(r.Context(), &putObjectInput)
@@ -198,4 +218,17 @@ func getVideoAspectRatio(filePath string) (string, error) {
 	}
 
 	return "other", nil
+}
+
+func processVideoForFastStart(filePath string) (string, error) {
+	outputFilePath := filePath + ".processing"
+	cmd := exec.Command("ffmpeg", "-i", filePath, "-c", "copy", "-movflags", "faststart", "-f", "mp4", outputFilePath)
+
+	err := cmd.Run()
+	if err != nil {
+		returnErr := errors.New("Error while executing ffmpeg command: " + err.Error())
+		return "", returnErr
+	}
+
+	return outputFilePath, nil
 }
